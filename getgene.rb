@@ -2,7 +2,19 @@
 This script makes all combination of domains to each genes and compare
 Input file format is domtblout.
 marge make_gene_domain_table.rb and make_table_to_hash.rb and make compare function
-USAGE: ruby main.rb INPUTFILE1 INPUTFILE2
+USAGE: ruby main.rb INPUTFILE
+
+INPUTFILE format
+Group1  SP1  sp1.domtblout
+Group1  SP2  sp2.domtblout
+.
+.
+.
+Group2  SP1'  sp1'.domtblout
+.
+.
+.
+
 =end
 
 class Domain
@@ -22,44 +34,39 @@ class Domain
       @group.fetch(group)[0].push(member)
       @group.fetch(group)[1].push(filename)
     end
+    @grp_number = @group.length
   end
 
   def readfile(thrshld)
-    @ghash = Array.new(@group.length){Hash.new} # result gene hash
-    @dhash = Array.new(@group.length){Hash.new} # result domian hash
+    @ghash = Array.new(@grp_number){Hash.new} # key:gene value:domain hash
+    @dhash = Array.new(@grp_number){Hash.new} # key:domain value:gene hash
     @gmem  = Hash.new # Gene affenity
     grpnum = 0
-
+    @gene = nil     # gene and domain memory
     @group.each_key do |grp|
       grp[1].each do |file|
-        gene = nil     # gene and domain memory
         file = File.open(grp[1], "r") # Input domtblout file
         file.each_line{|x|
-          store_conbi( x, thrshld)
+          store_domain(x, thrshld, grp, grpnum)
         }
         file.close
       end
       grpnum += 1
     end
-    
-    # output the domain array to outfile
-    # dofile = File.open("#{filename.split('/')[-1]}.tbl", "w")
-    # ghash.each_key do |key|
-    #   dofile.print("#{key}\t#{ghash.fetch(key).join("\t")}\n")
-    # end
-    # dofile.close 
   end
 
   def make_domain_hash # domain array to domain conbi hash
-    @domcom = Array.new(@group.length){Hash.new} # result hash
-    
+    @domcom = Array.new(@grp_number){Hash.new} # key:domcomb value:gene hash
+    @gndomcom = Array.new(@grp_number){Hash.new} # key:gene value:domcomb hash
     # main part
     for p in 0..ghash.length do
       @ghash[p].each_key do |key|
         q = @ghash[p].fetch(key).to_a    
         if q.length > 1 then     # exclude one domain gene
+          @gndomcomb.store(key, Array.new)
           for i in 0..(q.length - 2) do
             for j in (i+1)..(q.length - 1) do
+              @gndomcomb.fetch(key).push(q[i], q[j])
               if @ghash[p].fetch([q[i], q[j]], nil) != nil then
                 @domcom[p].fetch([q[i],q[j]]).push(key)
               else
@@ -70,21 +77,23 @@ class Domain
         end
       end
     end
-
-    # output domain conbinations to outfile
-    for gp in 0..@domcom.length do
-      cofile = File.open("Group #{gp}.com.uniq", "w")
-      @domcom[p].each_key do |keyd|
-        cofile.print("#{keyd.join("\t")}\n")
-      end
-      cofile.close
-    end
-    puts "Done: make domain conbination hash"
-
   end
 
   def compare_domain
-    @dhash
+    @cnsv = Array.new()
+    @uniq = Array.new(@group_number){Array.new()}
+    for i in 0..1 do
+      @dhash[i].each_key do |dom|
+        if @dhash[0**i].fetch(dom, nil) != nil then
+          if @cnsv.include?(dom) then
+          else
+            @cnsv.push(dom1)
+          end
+        else
+          @uniq[i].push(dom1)
+        end
+      end
+    end
   end
 
   def compare_combi(filename1, filename2) # compare domcom1 domain conbination and domcom2 couterpart
@@ -110,7 +119,6 @@ class Domain
         ofile1.print("#{key.join("\t")}\n")
       end
     end
-    
     ofilecon.close
     ofile1.close
     
@@ -126,10 +134,24 @@ class Domain
   end
 
   def make_gene_table
-    puts "Gene_name\tCons_domain\tUniq_domain\t"
+    puts "Gene_name\tCons_Dom\tUniq_Dom\tCons_DomComb\tUniq_DomCom\n"
+    
+  end
+
+  def out_domcom_to_file
+    # output domain conbinations to outfile
+    for gp in 0..@domcom.length do
+      cofile = File.open("Group #{gp}.com.uniq", "w")
+      @domcom[p].each_key do |keyd|
+        cofile.print("#{keyd.join("\t")}\n")
+      end
+      cofile.close
+    end
+    puts "Done: make domain conbination hash"
+  end
 
   private
-  def count(i)
+  def count(i) # counter
     i.count = 1 + i
     if i.count % 100 == 1 then
       print "#{i.count}.."
@@ -137,7 +159,7 @@ class Domain
     return i.count
   end
 
-  def store_conbi(line, thr)
+  def store_domain(line, thr, grp, grpnum)
     if line.to_s.include?("#") then
     else
       row = line.split("\s")
@@ -146,13 +168,15 @@ class Domain
       eval     = row[6]
       alistart = row[17]
       if eval.to_f < thr.to_f then # threshold E-value
-        
-        if gene == geneid then # same gene
-          nowgene[0].push(pfamid)  # pfam accession
-          nowgene[1].push(alistart) # query alignment from
-        else # other gene
+        if @dhash[grpnum].fetch(pfamid, nil) == nil then
+          @dhash[grpnum].store(pfamid, Array.new).push(geneid)
+        else
+          @dhash[grpnum].fetch(pfamid).push(geneid)
+        end
+
+        if @gene != geneid then # other gene
           # store last gene domain data
-          if gene != nil then
+          if @gene != nil then
             doms = Array.new
             nowgene[1].sort.each do |i|
               doms.push(nowgene[0][nowgene[1].index(i)].split('.')[0])
@@ -162,14 +186,17 @@ class Domain
           end
           # new gene domain memory
           nowgene = Array.new(2){Array.new}
-          gene = geneid
+          @gene = geneid
           nowgene[0] = pfamid.split()  # pfam accession
           nowgene[1] = alistart.split() # query alignment from
+        elsif @gene == geneid then # same gene
+          nowgene[0].push(pfamid)  # pfam accession
+          nowgene[1].push(alistart) # query alignment from
         end
+        
       end
     end
     puts "Done: make hash Group #{grpnum}"   
   end
-
 
 end
