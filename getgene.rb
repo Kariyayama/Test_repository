@@ -15,118 +15,115 @@ Group2  SP1'  sp1'.domtblout
 
 class Domain
 
+  BELONGS = 0
+  FILENAME = 1
+  CONSERVED = 1
+  NON_CONSERVED =0
+
   def initialize(listfile) # make domain array for each gene  
-    lfile = File.open(listfile, "r")  # Input list file
-    @group = Hash.new
+    list_file = File.open(listfile, "r")  # Input list file
+    @group = Hash.new                     # Hash: key => greup, value => [[belongs], [filename]]
+
     # read input file and make hash gene and domain
-    lfile.each_line{ |lst|
+    list_file.each_line{ |lst|
       if lst.to_s.include?("#") then # exclude '#' row
       else
-        list = lst.split("\s")
+        list     = lst.split("\s")
         group    = list[0]
-        member   = list[1]
-        filename = list[2]
-        if group != nil && member != nil && filename != nil then 
+        belongs  = list[BELONGS + 1]
+        filename = list[FILENAME + 1]
+        if group != nil && belongs != nil && filename != nil then 
           @group.store(group, Array.new(2){Array.new})
-          @group.fetch(group)[0].push(member)
-          @group.fetch(group)[1].push(filename)
+          @group.fetch(group)[BELONGS].push(belongs)
+          @group.fetch(group)[FILENAME].push(filename)
         end
       end
     }
-    @grp_number = @group.length
-    lfile.close
-    # p @group
+    @group_number = @group.length
+    list_file.close
   end
 
   def readfile(thrshld)
-    @ghash = Array.new(@grp_number){Hash.new} # key:gene value:domain hash
-    @dhash = Array.new(@grp_number){Hash.new} # key:domain value:gene hash
-    @gmem  = Hash.new # Gene affenity
-    @gene = nil     # gene and domain memory
-    grpnum = 0
+    @gene_hash   = Hash.new  # key:gene value:domain hash
+    @domain_hash = Hash.new  # key:domain value:gene hash
+    @gene_belongs = Hash.new # Gene affenity
+
     @group.each_key do |grp|
-      # p grp 
-      files = @group.fetch(grp)[1]
-      files.each {|fl|
-        file = File.open(fl, "r") # Input domtblout file
+      @gene_hash.store(grp, Hash.new)
+      @domain_hash.store(grp, Hash.new)
+      file_names = @group.fetch(grp)[FILENAME]
+      file_names.each {|domtblout| # Input domtblout file
+        file = File.open(domtblout, "r") 
+        puts "start: make hash #{grp}, #{domtblout}"
+        gene_nowgene = [nil, Array.new(2){Array.new}]
         file.each_line{|x|
-          store_domain(x, thrshld, grp, grpnum)
+          gene_nowgene = store_domain(x, thrshld, grp, 
+                                      gene_nowgene[0], gene_nowgene[1])
         }
-        puts "Done: make hash Group #{grpnum + 1}, #{fl}"   
+        puts "Done: make hash #{grp}, #{domtblout}"
         file.close
       }
-      grpnum += 1
     end
+    out_read_file
   end
 
   def make_domain_hash # domain array to domain conbi hash
-    @domcom = Array.new(@grp_number){Hash.new} # key:domcomb value:gene hash
-    @gndomcom = Array.new(@grp_number){Hash.new} # key:gene value:domcomb hash
+    @domcom      = Hash.new # key:domcomb value:gene hash
+    @gene_domcom = Hash.new # key:gene value:domcomb hash
+
     # main part
-    for gp in 0..(@grp_number - 1) do
-      @ghash[gp].each_key do |key|
-        q = @ghash[gp].fetch(key).to_a    
+    @gene_hash.each_key do |grp|
+      puts "Start: make combi #{grp}"
+      @domcom.store(grp, Hash.new)
+      @gene_domcom.store(grp, Hash.new)
+      @gene_hash[grp].each_key do |gene_key|
+        q = @gene_hash[grp].fetch(gene_key).to_a    
         if q.length > 1 then   # exclude one domain gene
-          make_combi(key, gp, q)
+          make_combi(gene_key, grp, q)
         end
       end
-      puts "Done, make combi Group #{gp + 1}"
+      puts "Done: make combi #{grp}"
     end
-    out_domcom_to_file
+
+    out_domcom_to_file # output to file
   end
 
-  def compare_domain
-    @cnsv = Array.new()
-    @uniq = Array.new(@group_number){Array.new()}
-    for i in 0..1 do
-      @dhash[i].each_key do |dom|
-        if @dhash[0**i].fetch(dom, nil) != nil then
-          if @cnsv.include?(dom) then
-          else
-            @cnsv.push(dom1)
-          end
+  def compare_domain(group1, group2)
+    exit if can_compare?(group1, group2) == 1 # group1 & group2 exist?
+    puts "Start: compare domain"
+
+    # main part
+    @dom_mat = Hash.new # Hash: key => domain, value => CONSERVED or NON_CONSERVED
+    @domain_hash.each_key do |grp1|
+      grp2 = flip(grp1, group1, group2)
+      @domain_hash[grp1].each_key do |dom|
+        if @domain_hash[grp2].fetch(dom, nil) != nil then
+          @dom_mat.store(dom, CONSERVED)
         else
-          @uniq[i].push(dom1)
+          @dom_mat.store(dom, NON_CONSERVED)
         end
       end
     end
+    out_domain_compare_file(group1, group2)
+    puts "Done: compare domain"
   end
 
-  def compare_combi # compare domcom1 domain conbination and domcom2 couterpart
-    ofile1 = File.open("Group1.spec.uniq", "w") # domcom1 specific domain combi
-    ofilecon = File.open("Group1_Group2_conserved.uniq", "w") # common domain conbi    
-    i = 0 # loop counter
-    
-    domcom2flag = Hash.new
-    @domcom[1].each_key do |dom2key|
-      domcom2flag.store(dom2key, 0)
-    end
-        
-    @domcom[0].each_key do |key| 
-      # loop count
-      i = count(i)
-      
-      # main part
-      if @domcom[1].fetch(key, nil) != nil then
-        ofilecon.print("#{key.join("\t")}\n") 
-        domcom2flag[key] = 1
-      else
-        ofile1.print("#{key.join("\t")}\n")
-      end
+  def compare_combi(group1, group2) # compare domcom1 domain conbination and domcom2 couterpart
+    exit if can_compare?(group1, group2) == 1  # group1 & group2 exist?
+    @dom_comb_mat = Hash.new # key => 'domain comb', value => CONSERVED or  NON_CONSERVED 
 
-    end
-    ofilecon.close
-    ofile1.close
-    
-    # output domcom2 specific domain conbination
-    ofile2 = File.open("Group2.spec.uniq", "w")
-    domcom2flag.each_key do |key| 
-      if domcom2flag.fetch(key) == 0 then
-        ofile2.print("#{key.join("\t")}\n")
+    # main part
+    puts "Start: compare domain conbination"
+    @domcom.each_key do |grp1|
+      grp2 = flip(grp1, group1, group2)
+      @domcom[grp1].each_key do |key| 
+        if @domcom[grp2].fetch(key, false) then   @dom_comb_mat.store(key, CONSERVED)
+        else  @dom_comb_mat.store(key, NON_CONSERVED)
+        end
       end
     end
-    ofile2.close
-    print "Done\n"
+    out_domcom_compare_file(group1, group2)
+    puts "Done: compare domain conbination"
   end
 
   def make_gene_table
@@ -135,27 +132,74 @@ class Domain
   end
 
   private
-  def out_domcom_to_file
-    # output domain conbinations to outfile
-    for gp in 0..(@domcom.length - 1) do
-      cofile = File.open("Group_#{gp + 1}.com.uniq", "w")
-      @domcom[gp].each_key do |keyd|
-        cofile.print("#{keyd.join("\t")}\n")
+  def out_read_file
+    @gene_hash.each_key do |group|
+      gene_file = File.open("#{group}.dom", "w")
+      @gene_hash[group].each_key do |gene|
+        gene_file.print("#{gene}\t#{@gene_hash[group].fetch(gene).join("\t")}\n")
       end
-      cofile.close
+      gene_file.close
     end
-    puts "Done: save domain conbination hash"
+    puts "Save gene hash"      
+  end
+
+  def out_domcom_to_file # output domain conbinations to outfile
+    @domcom.each_key do |group|
+      comb_file = File.open("#{group}.comb", "w")
+      @domcom[group].each_key do |domain_comb|
+        comb_file.print("#{domain_comb.join("\t")}\n")
+      end
+      comb_file.close
+    end
+    puts "Save domain conbination hash"
+  end
+
+  def out_domain_compare_file(group1, group2)     # output domain conbinations to outfile
+    out_file1 = File.open("#{group1}_spec.dom", "w") # domcom1 specific domain combi
+    out_file2 = File.open("#{group2}_spec.dom", "w") # domcom2 specific domain combi
+    out_file_cnsv = File.open("#{group1}_#{group2}_conserved.dom", "w") # common domain conbi    
+    @dom_mat.each_key do |key|
+      if @dom_mat[key] == CONSERVED then  
+        out_file_cnsv.print("#{key}\n") 
+      elsif @dom_mat[key] == NON_CONSERVED && @domain_hash[group1].fetch(key, nil) != nil then 
+        out_file1.print("#{key}\n")
+      elsif @dom_mat[key] == NON_CONSERVED && @domain_hash[group2].fetch(key, nil) != nil then 
+        out_file2.print("#{key}\n")
+      else  puts "Unexpected Error in out_domcom_compare_file."; exit
+      end
+    end
+    out_file_cnsv.close
+    out_file1.close
+    out_file2.close
+  end
+
+  def out_domcom_compare_file(group1, group2)     # output domain conbinations to outfile
+    out_file1 = File.open("#{group1}_spec.domcom", "w") # domcom1 specific domain combi
+    out_file2 = File.open("#{group2}_spec.domcom", "w") # domcom2 specific domain combi
+    out_file_cnsv = File.open("#{group1}_#{group2}_conserved.domcom", "w") # common domain conbi    
+    @dom_comb_mat.each_key do |key|
+      if @dom_comb_mat[key] == CONSERVED then  
+        out_file_cnsv.print("#{key.join("\t")}\n") 
+      elsif @dom_comb_mat[key] == NON_CONSERVED && @domcom[group1].fetch(key, nil) != nil then
+        out_file1.print("#{key.join("\t")}\n")
+      elsif @dom_comb_mat[key] == NON_CONSERVED && @domcom[group2].fetch(key, nil) != nil then 
+        out_file2.print("#{key.join("\t")}\n")
+      else  puts "Unexpected Error in out_domcom_compare_file."; exit
+      end
+    end
+    out_file_cnsv.close
+    out_file1.close
+    out_file2.close
   end
 
   def count(i) # counter
-    i_count = 1 + i
-    if i_count % 100 == 1 then
-      print "#{i_count}.."
+    i_count = i + 1
+    if i_count % 100 == 1 then print "#{i_count}.."
     end
     return i_count
   end
 
-  def store_domain(line, thr, grp, grpnum)
+  def store_domain(line, threshold, grp, gene, nowgene)
     if line.to_s.include?("#") then
     else
       row = line.split("\s")
@@ -163,50 +207,62 @@ class Domain
       geneid   = row[3]
       eval     = row[6]
       alistart = row[17]
-      if eval.to_f < thr.to_f then # threshold E-value
-        if @dhash[grpnum].fetch(pfamid, nil) == nil then
-          @dhash[grpnum].store(pfamid, Array.new).push(geneid)
+      if eval.to_f < threshold.to_f then # threshold E-value
+        if @domain_hash[grp].fetch(pfamid, nil) == nil then
+          @domain_hash[grp].store(pfamid, Array.new).push(geneid)
         else
-          @dhash[grpnum].fetch(pfamid).push(geneid)
+          @domain_hash[grp].fetch(pfamid).push(geneid)
         end
 
-        if @gene != geneid then # other gene
+        if gene != geneid then # other gene
           # store last gene domain data
-          if @gene != nil then
+          if gene != nil then
             doms = Array.new
-            @nowgene[1].sort.each do |i|
-              doms.push(@nowgene[0][@nowgene[1].index(i)].split('.')[0])
+            nowgene[1].sort.each do |i|
+              doms.push(nowgene[0][nowgene[1].index(i)].split('.')[0])
             end
-            # p doms
-            @ghash[grpnum].store(@gene, doms)
-            @gmem.store(@gene, [grp, @group.fetch(grp)[0]])
+            @gene_hash[grp].store(gene, doms)
+            @gene_belongs.store(gene, [grp, @group.fetch(grp)[BELONGS]])
           end
           # new gene domain memory
-          @nowgene = Array.new(2){Array.new}
-          @gene = geneid
-          @nowgene[0] = pfamid.split()  # pfam accession
-          @nowgene[1] = alistart.split() # query alignment from
+          nowgene = Array.new(2){Array.new}
+          gene = geneid
+          nowgene[0] = pfamid.split()  # pfam accession
+          nowgene[1] = alistart.split() # query alignment from
 
-        elsif @gene == geneid then # same gene
-          @nowgene[0].push(pfamid)  # pfam accession
-          @nowgene[1].push(alistart) # query alignment from
+        elsif gene == geneid then # same gene
+          nowgene[0].push(pfamid)  # pfam accession
+          nowgene[1].push(alistart) # query alignment from
         end
         
       end
     end
+    return [gene, nowgene]
   end
 
   def make_combi(key, group, query)
-    @gndomcom[group].store(key, Array.new)
+    @gene_domcom[group].store(key, Array.new)  # store Hash, key=>gene, value=>domain_conbi
     for i in 0..(query.length - 2) do
       for j in (i+1)..(query.length - 1) do
-        @gndomcom[group].fetch(key).push(query[i], query[j])
-        if @ghash[group].fetch([query[i], query[j]], nil) != nil then
-          @domcom[group].fetch([query[i], qeury[j]]).push(key)
-        else
-          @domcom[group].store([query[i], query[j]], Array.new).push(key)
-        end
+        @gene_domcom[group].fetch(key).push(query[i], query[j])
+        @domcom[group].store([query[i], query[j]], 0)
       end
+    end
+  end
+
+  def can_compare?(group1, group2)
+    if @group.fetch(group1, nil) == nil && @group.fetch(group2, nil) == nil then
+      puts 'Error: No such groups'
+      return 1
+    else
+      return 0
+    end
+  end
+  
+  def flip(now_group, group1, group2)
+    if    now_group == group1 then  return group2
+    elsif now_group == group2 then  return group1
+    else  puts "Error in flip function"; exit
     end
   end
 
